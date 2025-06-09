@@ -11,7 +11,7 @@ npm install -g mapshaper
 ```
 
 # 統合ファイルの作成
-`GeoJSON`, `TopoJSON`それぞれで統合ファイルを作成した。
+`GeoJSON`, `TopoJSON`, `NDJSON`それぞれで統合ファイルを作成した。
 
 ## GeoJSON
 
@@ -32,3 +32,8 @@ mapshaper 01/*.geojson combine-files -merge-layers -filter-fields polygon_uuid,l
 gh release create v2024-merged01 01/merged_01.topojson -t "2024統合TopoJSON" -n "サイズが大きいためReleaseで配布"
 ```
 
+## NDJSON
+
+```powershell
+gh release create v2024-merged01 01/merged_01.ndjson -t "2024統合NDJSON" -n "2024年度データをもとにNDJSONを作成"
+```
