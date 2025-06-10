@@ -1,4 +1,7 @@
 #!/bin/bash
+# Heapが不足する場合に備えてNode.jsのメモリ制限を増やす
+# このスクリプトは、複数のGeoJSONファイルをNDJSON形式に変換します。
+export NODE_OPTIONS="--max-old-space-size=8192"
 
 # 出力ファイル名
 OUT_FILE="merged_01.ndjson"
