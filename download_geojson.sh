@@ -19,7 +19,7 @@ tail -n +2 "$CSV_FILE" | while IFS=, read -r text url filename; do
     --check-certificate=false \
     --referer="$REFERER" \
     --user-agent="$UA" \
-    -o "$filename" "$url"
+    -o output/"$filename" "$url"
 done
 
 
