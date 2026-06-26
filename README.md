@@ -23,6 +23,11 @@ npm install -g ndjson-cli
 npm install -g topojson
 npm install -g mapshaper
 ```
+## データ取得
+get_download_link.js
+
+## merged GeoJSON → FGB
+ogr2ogr -f FlatGeobuf merged_01.fgb 2025_merged_01.geojson
 
 ### GeoJSON
 
