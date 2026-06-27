@@ -1,0 +1,14 @@
+# 2026年度 筆ポリゴン取得URL一覧
+#
+# 公式の筆ポリゴン公開サイトから取得したダウンロードURLを1行1件で貼り付ける。
+#
+# 書式:
+#   <URL>
+#   <URL> <保存ファイル名>
+#
+# ファイル名を省略した場合はURL末尾から推定する。
+# URLにクエリ文字列がある場合や、推定名が不安定な場合はファイル名を明示する。
+#
+# 例:
+# https://example.invalid/path/01234.geojson 01234.geojson
+# https://example.invalid/path/01235.geojson 01235.geojson
