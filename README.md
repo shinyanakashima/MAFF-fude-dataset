@@ -1,18 +1,31 @@
-# MAFF-fude-geojson-2024
-農水省 筆ポリゴンのGeoJSON（2024年度）
+# MAFF-fude-geojson
+農水省 筆ポリゴンのGeoJSON（2024 / 2025 / 2026年度）
 
 # データについて
 - 筆ポリゴンとして配布される`GeoJSON`ファイルは、『地方公共団体コード（`local_government_cd`）』単位で配布されている。
 - それらファイルを変換したものを『個別ファイル』とする
 - それらファイルを１ファイルに統合したファイルを『統合ファイル』とする
 
+## 年度別ディレクトリ
+各年度のデータは年度ごとのディレクトリ配下に、さらに都道府県コード2桁のディレクトリ単位で格納する。
+
+```
+<YEAR>/<PREF>/   例: 2025/01/, 2026/01/
+```
+
+| 年度 | ディレクトリ | 状態 |
+| ---- | ------------ | ---- |
+| 2024 | [2024/](2024) | 整備済み |
+| 2025 | [2025/](2025) | 整備済み |
+| 2026 | [2026/](2026) | 受け入れ準備済み（データ追加待ち） |
+
 ## 個別ファイル
-- 個別ファイルを[01](01)に追加した
+- 個別ファイルを各年度ディレクトリ（例: [2025/01](2025/01)）に追加した
 - ファイル形式は、`GeoJSON`, `TopoJSON`を追加した
 
 ## 統合ファイル
 - 統合データを、`GeoJSON`, `TopoJSON`, `NDJSON`それぞれで作成した
-- [release](https://github.com/shinyanakashima/MAFF-fude-geojson-2024/releases)から入手できる
+- サイズが大きいため[release](https://github.com/shinyanakashima/MAFF-fude-geojson/releases)から入手できる
 
 # データ作成
 ## Setup
@@ -23,33 +36,38 @@ npm install -g ndjson-cli
 npm install -g topojson
 npm install -g mapshaper
 ```
-## データ取得
-get_download_link.js
 
-## merged GeoJSON → FGB
-ogr2ogr -f FlatGeobuf merged_01.fgb 2025_merged_01.geojson
-
-### GeoJSON
+## 年度の指定方法
+各スクリプトは第1引数で年度（`YEAR`）、第2引数で都道府県コード（`PREF`）を受け取る。
+いずれも省略可能で、省略時は `YEAR=2025`, `PREF=01`。
 
 ```bash
-gh release create v2024-merged 01/merged_01.geojson --title "2024年統合GeoJSON" --notes "サイズが大きいためReleaseで配布"
+# 例: 2026年度・北海道(01)を処理する
+./download_geojson.sh 2026 01     # 配布GeoJSONを 2026/01/ へダウンロード
+./rename.sh           2026 01     # .json → .geojson にリネーム
+./merge_to_geojson.sh 2026 01     # 統合GeoJSONを作成
+./merge_to_ndjson.sh  2026 01     # 統合NDJSONを作成（省メモリのストリーム処理）
+./geojson_to_topojson.sh 2026 01  # 個別TopoJSONを作成
+./upload_merged_geojson.sh 2026 01 # 統合GeoJSONをGitHub Releaseへアップロード
 ```
 
-### TopoJSON
-Conohaでメモリエラーが起きるのでローカルPC似て作成。
+## データ取得
+get_download_link.js でダウンロードリンク一覧（CSV）を生成し、`download_geojson.sh` で取得する。
 
-- メモリを16GBに設定し、mapshaperで返還後、Releaseで配布
+## merged GeoJSON → FGB
+```bash
+ogr2ogr -f FlatGeobuf merged_01.fgb 2026/01/merged_01.geojson
+```
+
+### TopoJSON（統合）
+Conohaでメモリエラーが起きるのでローカルPCにて作成。
+
+- メモリを16GBに設定し、mapshaperで変換後、Releaseで配布
 
 ```powershell
 $env:NODE_OPTIONS="--max-old-space-size=16384"
 
-mapshaper 01/*.geojson combine-files -merge-layers -filter-fields polygon_uuid,land_type,local_government_cd -simplify 10% -o format=topojson 01/merged_01.topojson
+mapshaper 2026/01/*.geojson combine-files -merge-layers -filter-fields polygon_uuid,land_type,local_government_cd -simplify 10% -o format=topojson 2026/01/merged_01.topojson
 
-gh release create v2024-merged01 01/merged_01.topojson -t "2024統合TopoJSON" -n "サイズが大きいためReleaseで配布"
-```
-
-## NDJSON
-
-```powershell
-gh release create v2024-merged01 01/merged_01.ndjson -t "2024統合NDJSON" -n "2024年度データをもとにNDJSONを作成"
+gh release create v2026-merged01 2026/01/merged_01.topojson -t "2026統合TopoJSON" -n "サイズが大きいためReleaseで配布"
 ```
