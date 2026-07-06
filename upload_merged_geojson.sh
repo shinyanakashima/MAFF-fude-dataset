@@ -1,10 +1,19 @@
 #!/bin/bash
+# 統合GeoJSONをGitHub Releaseとしてアップロードします。
+#
+# 使い方:
+#   ./upload_merged_geojson.sh [YEAR] [PREF]
+#     YEAR: 年度 (例: 2024, 2025, 2026)。省略時は 2025
+#     PREF: 都道府県コード2桁ディレクトリ (例: 01)。省略時は 01
 
-# ----------- 設定（必要に応じて変更）-------------
-TAG_NAME="v2024-merged"
-RELEASE_TITLE="2024年統合GeoJSON"
+YEAR="${1:-2025}"
+PREF="${2:-01}"
+
+# ----------- 設定（年度・都道府県を反映）-------------
+TAG_NAME="v${YEAR}-merged"
+RELEASE_TITLE="${YEAR}年統合GeoJSON"
 RELEASE_NOTES="サイズが大きいため、GitHub Releaseで配布しています。"
-FILE_TO_UPLOAD="01/merged_01.geojson"
+FILE_TO_UPLOAD="${YEAR}/${PREF}/merged_${PREF}.geojson"
 GH_BIN="$HOME/bin/gh"
 # -----------------------------------------------
 
@@ -27,4 +36,3 @@ echo "🚀 GitHub Releaseを作成します..."
   --notes "$RELEASE_NOTES"
 
 echo "✅ アップロード完了: $FILE_TO_UPLOAD → リリース $TAG_NAME"
-
