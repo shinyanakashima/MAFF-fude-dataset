@@ -51,6 +51,32 @@ npm install -g mapshaper
 ./upload_merged_geojson.sh 2026 01 # 統合GeoJSONをGitHub Releaseへアップロード
 ```
 
+## 統合ファイル生成＋Release（一括）
+`build_release.sh` は、統合 GeoJSON / NDJSON / TopoJSON の生成から GitHub Release への
+アップロードまでを1コマンドで実行する（2024年度と同じ配布フロー）。
+
+```bash
+# 例: 2025年度・北海道(01) を生成してReleaseまで作成
+./build_release.sh 2025 01
+
+# 生成だけ行い、アップロードはしない（gh不要）
+./build_release.sh 2025 01 --no-release
+
+# mapshaperが無い環境ではTopoJSONをスキップ
+./build_release.sh 2025 01 --no-topojson
+```
+
+生成物と Release タグ（`<YEAR>/<PREF>/` 配下）:
+
+| ファイル | Release タグ |
+| -------- | ------------ |
+| `merged_<PREF>.geojson`  | `v<YEAR>-merged<PREF>-geojson` |
+| `merged_<PREF>.ndjson`   | `v<YEAR>-merged<PREF>-ndjson` |
+| `merged_<PREF>.topojson` | `v<YEAR>-merged<PREF>-topojson` |
+
+> 前提ツール: `jq`（必須）, `mapshaper`（TopoJSON統合）, `gh`（Release作成）。
+> NDJSONは1ファイルずつのストリーム処理、GeoJSONはNDJSONから包む方式で、いずれも省メモリ。
+
 ## データ取得
 get_download_link.js でダウンロードリンク一覧（CSV）を生成し、`download_geojson.sh` で取得する。
 
