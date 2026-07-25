@@ -77,8 +77,32 @@ npm install -g mapshaper
 > 前提ツール: `jq`（必須）, `mapshaper`（TopoJSON統合）, `gh`（Release作成）。
 > NDJSONは1ファイルずつのストリーム処理、GeoJSONはNDJSONから包む方式で、いずれも省メモリ。
 
+## FGB生成とR2配置（GitHub Actions）
+個別GeoJSONから`FlatGeobuf`を生成し、Cloudflare R2（`geo-opendata`バケット）へ配置する
+ワークフロー（`.github/workflows/build-fgb-to-r2.yml`）。Actionsタブから
+`Build FGB to R2` を実行し、年度と都道府県コードを指定する。
+
+| 入力 | 例 | 説明 |
+| ---- | -- | ---- |
+| `year` | `2025` | 年度 |
+| `prefs` | `01` / `01,13` / `all` | 対象県。`all`で01〜47を並列処理 |
+
+元データの所在で自動的に分岐する。
+
+1. `<YEAR>/<PREF>/*.geojson` がリポジトリにある → そのまま変換
+2. 無く `maff_list_<PREF>.csv` がある → ダウンロードしてから変換
+3. どちらも無い → 警告を出してスキップ
+
+配置先は `maff-fude/fgb/<YEAR>/<PREF>/fude_<YEAR>_<PREF>.fgb`。
+アップロード後にサイズ突合で検証する。事前にSecretsへ`R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` を登録すること。
+
+> FGBへ1ファイルずつappendすると空間インデックスを都度再構築して極端に遅いため、
+> 一旦NDJSON（GeoJSONSeq）へ連結してから1パスで変換している。
+
 ## データ取得
 get_download_link.js でダウンロードリンク一覧（CSV）を生成し、`download_geojson.sh` で取得する。
+取得したCSVはリポジトリに残しておくと、上記ワークフローがダウンロードから自動実行できる。
 
 ## merged GeoJSON → FGB
 ```bash

@@ -1,0 +1,167 @@
+# 個別GeoJSONからFGBを生成し、Cloudflare R2 へ配置するワークフロー。
+#
+# 元データの所在で2通りに分岐する:
+#   A) <year>/<pref>/*.geojson がリポジトリにある  → そのまま変換
+#   B) 無い場合は maff_list_<pref>.csv があればダウンロードしてから変換
+#      （CSVは農水省サイトで get_download_link.js を実行して取得する）
+#
+# 事前設定 (Settings > Secrets and variables > Actions):
+#   R2_ACCESS_KEY_ID     : R2 APIトークンのAccess Key ID
+#   R2_SECRET_ACCESS_KEY : 同 Secret Access Key
+#   R2_ENDPOINT          : https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+#
+# 出力キー: geo-opendata/maff-fude/fgb/<year>/<pref>/fude_<year>_<pref>.fgb
+name: Build FGB to R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "年度 (例: 2025)"
+        required: true
+        default: "2025"
+      prefs:
+        description: '都道府県コード。カンマ区切り (例: "01,13") または "all" で01〜47'
+        required: true
+        default: "01"
+
+env:
+  BUCKET: geo-opendata
+  DATASET: maff-fude
+  # 既存の2024年度FGBに合わせたレイヤー名
+  LAYER: merged
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      prefs: ${{ steps.expand.outputs.prefs }}
+    steps:
+      - id: expand
+        run: |
+          if [ "${{ inputs.prefs }}" = "all" ]; then
+            list=$(seq -w 1 47 | paste -sd, -)
+          else
+            list="${{ inputs.prefs }}"
+          fi
+          json=$(echo "$list" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -E '^[0-9]{2}$' \
+                 | jq -R . | jq -sc .)
+          echo "prefs=$json" >> "$GITHUB_OUTPUT"
+          echo "対象: $json"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        pref: ${{ fromJson(needs.prepare.outputs.prefs) }}
+    steps:
+      - name: ディスク空き容量を確保
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h / | tail -1
+
+      # 対象年度・県のみを取得する（全履歴・全年度を取ると数GBになるため）
+      - name: チェックアウト (対象パスのみ)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: |
+            ${{ inputs.year }}/${{ matrix.pref }}
+            maff_list_${{ matrix.pref }}.csv
+          sparse-checkout-cone-mode: false
+
+      - name: ツール導入 (GDAL / rclone / aria2)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gdal-bin aria2
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          ogr2ogr --version && rclone version | head -1
+
+      - name: 元データを用意 (無ければCSVからダウンロード)
+        run: |
+          set -euo pipefail
+          YEAR="${{ inputs.year }}"; PREF="${{ matrix.pref }}"
+          DIR="${YEAR}/${PREF}"
+          count=$(ls -1 "${DIR}"/*.geojson 2>/dev/null | grep -v 'merged_' | wc -l || true)
+
+          if [ "$count" -gt 0 ]; then
+            echo "リポジトリ内の個別GeoJSONを使用: ${count} 件"
+            exit 0
+          fi
+
+          CSV="maff_list_${PREF}.csv"
+          if [ ! -f "$CSV" ]; then
+            echo "::warning::元GeoJSONも ${CSV} も無いためスキップします (${YEAR}/${PREF})"
+            echo "SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "${CSV} からダウンロードします"
+          mkdir -p "$DIR"
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+          tail -n +2 "$CSV" | while IFS=, read -r text url filename; do
+            url=$(echo "$url" | sed 's/^"\(.*\)"$/\1/')
+            filename=$(echo "$filename" | sed 's/^"\(.*\)"$/\1/')
+            [ -z "$url" ] || [ -z "$filename" ] && continue
+            aria2c --quiet --allow-overwrite=true --check-certificate=false \
+              --referer="https://download.fude.maff.go.jp/" --user-agent="$UA" \
+              -o "${DIR}/${filename}" "$url"
+          done
+          # 配布物は .json のため .geojson へ揃える
+          for f in "${DIR}"/*.json; do [ -e "$f" ] && mv -n "$f" "${f%.json}.geojson"; done
+          echo "ダウンロード完了: $(ls -1 ${DIR}/*.geojson | wc -l) 件"
+
+      - name: GeoJSON → NDJSON → FGB → R2
+        if: env.SKIP != '1'
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_REGION: auto
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # バケット作成権限を持たないスコープ付きトークンで必要
+          RCLONE_S3_NO_CHECK_BUCKET: "true"
+        run: |
+          set -euo pipefail
+          YEAR="${{ inputs.year }}"; PREF="${{ matrix.pref }}"
+          DIR="${YEAR}/${PREF}"
+          OUT="fude_${YEAR}_${PREF}.fgb"
+          DST="r2:${BUCKET}/${DATASET}/fgb/${YEAR}/${PREF}/${OUT}"
+
+          echo "::group::GeoJSON → NDJSON"
+          # FGBへ逐次appendすると空間インデックスを都度再構築して極端に遅いため、
+          # 一旦GeoJSONSeqへ連結してから1パスで変換する
+          : > merged.ndjson
+          for f in "${DIR}"/*.geojson; do
+            case "$f" in *merged_*) continue;; esac
+            ogr2ogr -f GeoJSONSeq /vsistdout/ "$f" >> merged.ndjson
+          done
+          echo "features: $(wc -l < merged.ndjson)"
+          ls -lh merged.ndjson
+          echo "::endgroup::"
+
+          echo "::group::NDJSON → FGB"
+          ogr2ogr -f FlatGeobuf -nln "${LAYER}" "$OUT" merged.ndjson
+          rm -f merged.ndjson
+          ls -lh "$OUT"
+          ogrinfo -so -al "$OUT" | sed -n '/Layer name/p;/Feature Count/p'
+          echo "::endgroup::"
+
+          echo "::group::R2 へアップロード"
+          rclone copyto --stats 30s --stats-one-line "$OUT" "$DST"
+          echo "::endgroup::"
+
+          local_size=$(stat -c%s "$OUT")
+          remote_size=$(rclone size "$DST" --json | sed 's/.*"bytes":\([0-9]*\).*/\1/')
+          if [ "$local_size" != "$remote_size" ]; then
+            echo "::error::サイズ不一致 local=${local_size} remote=${remote_size}"
+            exit 1
+          fi
+          echo "✅ ${YEAR}/${PREF} 完了 (${local_size} バイト)"
