@@ -174,8 +174,8 @@ mapshaper 2026/01/*.geojson combine-files -merge-layers `
 | `v2024-merged01` | 2024統合TopoJSON |
 | `v2024-merged01-NDJSON` | 2024統合NDJSON |
 
-> タグの命名が揺れている。今後追加する分は `v<YEAR>-<FORMAT><PREF>`
-> （例: `v2025-geojson01`）に揃える予定。
+> タグの命名が揺れている。今後追加する分は**年度×県ごとに1リリース**とし、
+> タグ `v<YEAR>-<PREF>`（例: `v2025-01`）に3形式のファイルをまとめて添付する。
 
 # ビューア（GitHub Pages）
 `viewer/fgb/` にFlatGeobufビューアを配置し、`main`へのpushで自動デプロイする。
@@ -224,7 +224,7 @@ cd viewer/fgb && pnpm install && pnpm run dev   # ローカル開発
 
 | リポジトリ | 役割 |
 | ---------- | ---- |
-| [MAFF-fude-API](https://github.com/shinyanakashima/MAFF-fude-API) | 筆ポリゴンAPI（Cloudflare Workers） |
+| MAFF-fude-API（非公開） | 筆ポリゴンAPI（Cloudflare Workers）。APIそのものは[公開](https://maff-fude-api.it-zukosha.workers.dev/) |
 | [MAFF-fude-vectortiles](https://github.com/shinyanakashima/MAFF-fude-vectortiles) | PMTiles生成・タイルビューア |
 
 # 出典
