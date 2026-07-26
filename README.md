@@ -201,8 +201,8 @@ Secretsに`CLOUDFLARE_API_TOKEN`（D1:Edit）と`CLOUDFLARE_ACCOUNT_ID`の登録
 https://shinyanakashima.github.io/<repo>/fgb/
 ```
 
-複数のビューアを並べられるようサブパス構成にしている。viteの`base`は`VITE_BASE`で
-上書きするため、リポジトリ名を変更してもワークフロー側の1箇所で追従できる。
+複数のビューアを並べられるようサブパス構成にしている。viteの`base`は相対パス(`./`)
+なので、リポジトリ名やサブパスが変わってもアセット参照は壊れない。
 
 ```bash
 cd viewer/fgb && pnpm install && pnpm run dev   # ローカル開発

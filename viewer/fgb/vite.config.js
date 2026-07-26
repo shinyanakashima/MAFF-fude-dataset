@@ -5,7 +5,9 @@ export default defineConfig({
     plugins: [
         tailwindcss(),
     ],
-    // GitHub Pages のサブパス。ビューアを複数並べるため /<repo>/fgb/ に配置する。
-    // 環境変数で上書きできるようにし、リポジトリ名の変更に追従できるようにする。
-    base: process.env.VITE_BASE ?? '/MAFF-fude-dataset/fgb/',
+    // 相対パスで出力する。GitHub Pages のサブパス(/<repo>/fgb/)配下に置いても、
+    // リポジトリ名やパスに依存せずアセットを解決できる。
+    // 絶対パス(/<repo>/fgb/)にすると、リネーム時やワークフロー再実行時に
+    // 古いリポジトリ名が埋め込まれて 404 になる。
+    base: process.env.VITE_BASE ?? './',
 });

@@ -4,8 +4,8 @@
 #   /<repo>/fgb/    … FlatGeobufビューア
 #   /<repo>/tiles/  … ベクタータイルビューア（MAFF-fude-vectortiles統合時に追加）
 #
-# 各ビューアのviteのbaseは VITE_BASE で上書きするため、リポジトリ名を変更しても
-# ここ1箇所の修正で追従できる。
+# 各ビューアのviteのbaseは相対パス('./')にしているため、リポジトリ名やサブパスが
+# 変わっても追従できる。
 name: Deploy to GitHub Pages
 
 on:
@@ -47,10 +47,10 @@ jobs:
         with:
           node-version: "22"
 
+      # viteのbaseは相対パス('./')。リポジトリ名やサブパスに依存しないため、
+      # リネームしてもワークフロー再実行でも壊れない。
       - name: FGBビューアをビルド
         working-directory: viewer/fgb
-        env:
-          VITE_BASE: /${{ github.event.repository.name }}/fgb/
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
