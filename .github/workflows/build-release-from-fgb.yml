@@ -130,13 +130,15 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::GeoJSON → TopoJSON (mapshaper)"
-          # 北海道(81万件・1.2GB)の実測でヒープが必要。ランナーは16GB。
-          # メモリ不足で失敗した場合は簡略化率を半分に下げて1回だけ再試行する。
+          # 北海道(81万件・1.2GB)の実測: ピーク7.9GB・約4分。ランナー(16GB)で余裕がある。
+          # 万一メモリ不足で失敗した場合は簡略化率を半分に下げて1回だけ再試行する。
           export NODE_OPTIONS="--max-old-space-size=12288"
           SIMPLIFY="${{ inputs.simplify }}"
           convert() {
+            # レイヤー名は年度非依存の固定名 fude にする(タイルと同じ方針)
             mapshaper "${BASE}.geojson" \
               -filter-fields polygon_uuid,land_type,local_government_cd \
+              -rename-layers fude \
               -simplify "$1%" \
               -o format=topojson "${BASE}.topojson"
           }
