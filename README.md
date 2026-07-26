@@ -112,6 +112,42 @@ rclone copy --progress . r2:geo-opendata/maff-fude/source/<YEAR>/ --include "*.z
 > FGBへ1ファイルずつappendすると空間インデックスを都度再構築して極端に遅いため、
 > 一旦NDJSON（GeoJSONSeq）へ連結してから1パスで変換している。
 
+## 解析用Parquetの生成（GitHub Actions）
+R2上のFGBから解析用のGeoParquetを生成する
+（`.github/workflows/build-parquet-from-fgb.yml`）。Actionsタブから
+`Build Parquet from FGB` を実行し、年度と都道府県コードを指定する。
+
+ジオメトリはWKB、bbox（`min_lng`/`min_lat`/`max_lng`/`max_lat`）と`year`/`pref`を
+カラムとして保持する。DuckDBはrow groupのmin/max統計で絞り込むため、Hiveパーティションに
+頼らずカラムだけで実用的なプルーニングが効く。
+
+```sql
+INSTALL spatial; LOAD spatial;
+SELECT land_type, count(*) FROM 'fude_2025_01.parquet' GROUP BY land_type;
+```
+
+北海道（812,259 features）での実測値:
+
+| 形式 | サイズ | 用途 |
+| ---- | ------ | ---- |
+| 元GeoJSON（展開） | 1,971 MB | — |
+| FGB | 845 MB | APIの空間検索 |
+| Parquet（ZSTD） | 304 MB | 解析 |
+
+集計クエリは全81万件に対して0.02秒、bbox絞り込みは0.04秒。
+
+## 保持スコープの方針
+**データの保持は北海道（01）のみ**とする。パイプライン自体は全国対応で、`prefs=all` を
+指定すれば47都道府県を処理できるが、実務上の対象が道内であるため保存はしない。
+
+| 種別 | 保持範囲 | 備考 |
+| ---- | -------- | ---- |
+| `source/` の配布zip | 入手できた年度の全県 | 再取得にアンケート回答が必要なため原本として保管 |
+| `fgb/` `pmtiles/` `parquet/` | 北海道のみ | 道外はzipから随時再生成できる |
+| リポジトリ内のGeoJSON | 北海道のみ | サンプル・パイプライン検証用 |
+
+道外が必要になった場合は、`prefs=all` で実行すれば数十分で再生成できる。
+
 ## データ取得
 get_download_link.js でダウンロードリンク一覧（CSV）を生成し、`download_geojson.sh` で取得する。
 取得したCSVはリポジトリに残しておくと、上記ワークフローがダウンロードから自動実行できる。
