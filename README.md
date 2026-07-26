@@ -136,6 +136,33 @@ SELECT land_type, count(*) FROM 'fude_2025_01.parquet' GROUP BY land_type;
 
 集計クエリは全81万件に対して0.02秒、bbox絞り込みは0.04秒。
 
+## D1への属性投入（GitHub Actions）
+R2上のParquetから、D1の属性インデックスを投入する
+（`.github/workflows/load-d1-from-parquet.yml`）。Actionsタブから
+`Load D1 from Parquet` を実行する。
+
+D1は**筆ID（`polygon_uuid`）から場所・属性を引く索引**として使う。FGBは位置でしか
+引けず、ParquetはWorkerから読めないため、`GET /api/fude/:uuid` はD1が担う。
+ジオメトリ本体はD1に入れない（R2のFGBが持つ）。
+
+| 入力 | 例 | 説明 |
+| ---- | -- | ---- |
+| `year` | `2026` | 年度 |
+| `prefs` | `01` / `all` | 対象県 |
+| `replace` | `true` | 投入前に対象年度・県の既存行を削除する |
+
+処理の流れと実測値（北海道・808,973行）:
+
+1. R2からParquetを取得
+2. 値に想定外の文字が無いか確認（SQLへ直に埋め込むため）
+3. DuckDBでVALUES行を生成
+4. 500行/INSERT・50,000行/ファイルに分割 → **17ファイル・計85MB**
+5. `wrangler d1 execute --remote --file` で順に投入
+6. Parquetの件数とD1の件数を突合
+
+D1への同時書き込みを避けるため、複数県を指定した場合も直列に実行する。
+Secretsに`CLOUDFLARE_API_TOKEN`（D1:Edit）と`CLOUDFLARE_ACCOUNT_ID`の登録が必要。
+
 ## 保持スコープの方針
 **データの保持は北海道（01）のみ**とする。パイプライン自体は全国対応で、`prefs=all` を
 指定すれば47都道府県を処理できるが、実務上の対象が道内であるため保存はしない。
