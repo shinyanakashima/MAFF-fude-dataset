@@ -5,3 +5,7 @@ merged_*.ndjson
 
 # ダウンロード作業用ディレクトリ
 output/
+
+# ビューアのビルド成果物
+viewer/*/dist/
+node_modules/

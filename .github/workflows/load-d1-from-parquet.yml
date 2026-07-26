@@ -7,7 +7,7 @@
 # 事前設定 (Settings > Secrets and variables > Actions):
 #   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT
 #   CLOUDFLARE_API_TOKEN  … D1:Edit 権限
-#   CLOUDFLARE_ACCOUNT_ID … 1ffbb67f5c5693b33a09add2c4fc15a9
+#   CLOUDFLARE_ACCOUNT_ID … CloudflareのアカウントID
 #
 # 入力: geo-opendata/maff-fude/parquet/<year>/<pref>/fude_<year>_<pref>.parquet
 # 出力: D1データベース fude の fude テーブル

@@ -1,0 +1,88 @@
+# ビューアをビルドして GitHub Pages へデプロイする。
+#
+# 複数のビューアを1つのPagesサイトに並べられるよう、サブパス構成にしている。
+#   /<repo>/fgb/    … FlatGeobufビューア
+#   /<repo>/tiles/  … ベクタータイルビューア（MAFF-fude-vectortiles統合時に追加）
+#
+# 各ビューアのviteのbaseは VITE_BASE で上書きするため、リポジトリ名を変更しても
+# ここ1箇所の修正で追従できる。
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "viewer/**"
+      - ".github/workflows/deploy-ghpages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時デプロイを避ける（進行中のものは完了させる）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          filter: blob:none
+          # 年度データ(数GB)を取得しないよう、ビューアのみをチェックアウトする
+          sparse-checkout: |
+            viewer
+          sparse-checkout-cone-mode: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: FGBビューアをビルド
+        working-directory: viewer/fgb
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/fgb/
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: 公開物をまとめる
+        run: |
+          mkdir -p dist/fgb
+          cp -r viewer/fgb/dist/* dist/fgb/
+          # ルートアクセス時はFGBビューアへ誘導する
+          cat > dist/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ja">
+            <head>
+              <meta charset="utf-8">
+              <title>MAFF 筆ポリゴン ビューア</title>
+              <meta http-equiv="refresh" content="0; url=./fgb/">
+            </head>
+            <body><p><a href="./fgb/">FlatGeobufビューアへ</a></p></body>
+          </html>
+          HTML
+          find dist -maxdepth 2 -type d | sort
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
