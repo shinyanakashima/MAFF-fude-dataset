@@ -1,8 +1,10 @@
 # 個別GeoJSONからFGBを生成し、Cloudflare R2 へ配置するワークフロー。
 #
-# 元データの所在で2通りに分岐する:
+# 元データの所在で3通りに分岐する（上から順に探す）:
 #   A) <year>/<pref>/*.geojson がリポジトリにある  → そのまま変換
-#   B) 無い場合は maff_list_<pref>.csv があればダウンロードしてから変換
+#   B) R2 に source/<year>/<year>_<pref>.zip がある → 展開して変換
+#      （農水省サイトからアンケート回答で入手したzipを退避しておく運用）
+#   C) maff_list_<pref>.csv がある → ダウンロードしてから変換
 #      （CSVは農水省サイトで get_download_link.js を実行して取得する）
 #
 # 事前設定 (Settings > Secrets and variables > Actions):
@@ -79,11 +81,19 @@ jobs:
       - name: ツール導入 (GDAL / rclone / aria2)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gdal-bin aria2
+          sudo apt-get install -y --no-install-recommends gdal-bin aria2 unzip
           curl -fsSL https://rclone.org/install.sh | sudo bash
           ogr2ogr --version && rclone version | head -1
 
-      - name: 元データを用意 (無ければCSVからダウンロード)
+      - name: 元データを用意 (リポジトリ → R2のzip → CSVからDL の順に探す)
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_REGION: auto
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_S3_NO_CHECK_BUCKET: "true"
         run: |
           set -euo pipefail
           YEAR="${{ inputs.year }}"; PREF="${{ matrix.pref }}"
@@ -91,16 +101,30 @@ jobs:
           count=$(ls -1 "${DIR}"/*.geojson 2>/dev/null | grep -v 'merged_' | wc -l || true)
 
           if [ "$count" -gt 0 ]; then
-            echo "リポジトリ内の個別GeoJSONを使用: ${count} 件"
+            echo "A) リポジトリ内の個別GeoJSONを使用: ${count} 件"
+            exit 0
+          fi
+
+          # B) R2 に退避した配布zipを使う
+          ZIP="r2:${BUCKET}/${DATASET}/source/${YEAR}/${YEAR}_${PREF}.zip"
+          if rclone lsf "$ZIP" >/dev/null 2>&1; then
+            echo "B) R2のzipを使用: ${YEAR}_${PREF}.zip"
+            mkdir -p "$DIR"
+            rclone copyto --stats 30s --stats-one-line "$ZIP" "src.zip"
+            # zip直下・サブディレクトリのどちらでも拾えるよう -j で平坦に展開する
+            unzip -q -o -j src.zip -d "$DIR"
+            rm -f src.zip
+            echo "展開: $(ls -1 "$DIR" | wc -l) ファイル"
             exit 0
           fi
 
           CSV="maff_list_${PREF}.csv"
           if [ ! -f "$CSV" ]; then
-            echo "::warning::元GeoJSONも ${CSV} も無いためスキップします (${YEAR}/${PREF})"
+            echo "::warning::元GeoJSON・R2のzip・${CSV} のいずれも無いためスキップします (${YEAR}/${PREF})"
             echo "SKIP=1" >> "$GITHUB_ENV"
             exit 0
           fi
+          echo "C) CSVからダウンロードします"
 
           echo "${CSV} からダウンロードします"
           mkdir -p "$DIR"
@@ -137,13 +161,22 @@ jobs:
 
           echo "::group::GeoJSON → NDJSON"
           # FGBへ逐次appendすると空間インデックスを都度再構築して極端に遅いため、
-          # 一旦GeoJSONSeqへ連結してから1パスで変換する
+          # 一旦GeoJSONSeqへ連結してから1パスで変換する。
+          # 配布zipは .json、リポジトリ内は .geojson のため両方を対象にする
+          # （GDALは拡張子に依存せずGeoJSONを読める）
           : > merged.ndjson
-          for f in "${DIR}"/*.geojson; do
+          n=0
+          for f in "${DIR}"/*.geojson "${DIR}"/*.json; do
+            [ -e "$f" ] || continue
             case "$f" in *merged_*) continue;; esac
             ogr2ogr -f GeoJSONSeq /vsistdout/ "$f" >> merged.ndjson
+            n=$((n+1))
           done
-          echo "features: $(wc -l < merged.ndjson)"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::変換対象のGeoJSONが見つかりません (${DIR})"
+            exit 1
+          fi
+          echo "入力 ${n} ファイル / features: $(wc -l < merged.ndjson)"
           ls -lh merged.ndjson
           echo "::endgroup::"
 

@@ -87,11 +87,23 @@ npm install -g mapshaper
 | `year` | `2025` | 年度 |
 | `prefs` | `01` / `01,13` / `all` | 対象県。`all`で01〜47を並列処理 |
 
-元データの所在で自動的に分岐する。
+元データの所在で自動的に分岐する（上から順に探す）。
 
 1. `<YEAR>/<PREF>/*.geojson` がリポジトリにある → そのまま変換
-2. 無く `maff_list_<PREF>.csv` がある → ダウンロードしてから変換
-3. どちらも無い → 警告を出してスキップ
+2. R2 に `maff-fude/source/<YEAR>/<YEAR>_<PREF>.zip` がある → 展開して変換
+3. `maff_list_<PREF>.csv` がある → ダウンロードしてから変換
+4. いずれも無い → 警告を出してスキップ
+
+配布zipは中身が `.json`、リポジトリ内は `.geojson` だが、GDALは拡張子に依存せず
+GeoJSONを読めるため、両方をそのまま変換対象にしている。
+
+### 配布zipのR2退避
+農水省サイトの配布物（アンケート回答が必要で自動取得できない）は、入手したら
+R2へ退避しておくとワークフローから再利用できる。再取得の手間を避けられる。
+
+```bash
+rclone copy --progress . r2:geo-opendata/maff-fude/source/<YEAR>/ --include "*.zip"
+```
 
 配置先は `maff-fude/fgb/<YEAR>/<PREF>/fude_<YEAR>_<PREF>.fgb`。
 アップロード後にサイズ突合で検証する。事前にSecretsへ`R2_ACCESS_KEY_ID`,
