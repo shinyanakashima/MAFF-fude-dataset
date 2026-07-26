@@ -1,5 +1,35 @@
-# MAFF-fude-geojson
-農水省 筆ポリゴンのGeoJSON（2024 / 2025 / 2026年度）
+# MAFF-fude-dataset
+農水省 [筆ポリゴン](https://open.fude.maff.go.jp/) のデータセットと変換パイプライン。
+（旧 `MAFF-fude-geojson`。`MAFF-fude-fgb` を統合）
+
+## 構成
+```
+.                        … 元データ（GeoJSON / TopoJSON、北海道のみ）
+├─ 2024/01/ 2025/01/ 2026/01/
+├─ scripts/              … 取得・変換・アップロードスクリプト
+├─ viewer/fgb/           … FlatGeobufビューア（GitHub Pages）
+└─ .github/workflows/    … 変換パイプライン
+```
+
+配布用の成果物は Cloudflare R2（`geo-opendata` バケット）に置く。
+
+| プレフィックス | 内容 | 生成元 |
+| -------------- | ---- | ------ |
+| `maff-fude/source/<YEAR>/` | 農水省の配布zip（原本） | 手動取得 |
+| `maff-fude/fgb/<YEAR>/<PREF>/` | FlatGeobuf | `Build FGB to R2` |
+| `maff-fude/pmtiles/<YEAR>/` | PMTiles | `Build PMTiles from FGB`（別リポジトリ） |
+| `maff-fude/parquet/<YEAR>/<PREF>/` | GeoParquet | `Build Parquet from FGB` |
+
+APIは [MAFF-fude-API](https://github.com/shinyanakashima/MAFF-fude-API) が提供する。
+
+## 変換パイプライン
+zipをR2へ置いたあと、Actionsを順に実行すれば全形式が揃う。年度が変わっても同じ手順で再現できる。
+
+```
+配布zip → [Build FGB to R2] → FGB ─┬→ [Build PMTiles from FGB] → PMTiles
+                                    ├→ [Build Parquet from FGB] → Parquet
+                                    └→ [Load D1 from Parquet]   → D1（筆ID索引）
+```
 
 # データについて
 - 筆ポリゴンとして配布される`GeoJSON`ファイルは、『地方公共団体コード（`local_government_cd`）』単位で配布されている。
@@ -162,6 +192,21 @@ D1は**筆ID（`polygon_uuid`）から場所・属性を引く索引**として�
 
 D1への同時書き込みを避けるため、複数県を指定した場合も直列に実行する。
 Secretsに`CLOUDFLARE_API_TOKEN`（D1:Edit）と`CLOUDFLARE_ACCOUNT_ID`の登録が必要。
+
+## ビューア（GitHub Pages）
+`viewer/fgb/` にFlatGeobufビューアを配置し、`main`へのpushで自動デプロイする
+（`.github/workflows/deploy-ghpages.yml`）。
+
+```
+https://shinyanakashima.github.io/<repo>/fgb/
+```
+
+複数のビューアを並べられるようサブパス構成にしている。viteの`base`は`VITE_BASE`で
+上書きするため、リポジトリ名を変更してもワークフロー側の1箇所で追従できる。
+
+```bash
+cd viewer/fgb && pnpm install && pnpm run dev   # ローカル開発
+```
 
 ## 保持スコープの方針
 **データの保持は北海道（01）のみ**とする。パイプライン自体は全国対応で、`prefs=all` を
