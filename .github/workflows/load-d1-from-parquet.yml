@@ -1,0 +1,206 @@
+# R2上のParquetから、D1の属性インデックスを投入するワークフロー。
+#
+# D1は「筆ID(polygon_uuid)から場所・属性を引く」ための索引として使う。
+# FGBは位置でしか引けず、ParquetはWorkerから読めないため、この用途はD1が担う。
+# ジオメトリ本体はD1に入れない（R2のFGBが持つ）。
+#
+# 事前設定 (Settings > Secrets and variables > Actions):
+#   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT
+#   CLOUDFLARE_API_TOKEN  … D1:Edit 権限
+#   CLOUDFLARE_ACCOUNT_ID … 1ffbb67f5c5693b33a09add2c4fc15a9
+#
+# 入力: geo-opendata/maff-fude/parquet/<year>/<pref>/fude_<year>_<pref>.parquet
+# 出力: D1データベース fude の fude テーブル
+name: Load D1 from Parquet
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "年度 (例: 2026)"
+        required: true
+        default: "2026"
+      prefs:
+        description: '都道府県コード。カンマ区切り (例: "01,13") または "all" で01〜47'
+        required: true
+        default: "01"
+      replace:
+        description: "投入前に対象年度・県の既存行を削除する"
+        type: boolean
+        required: false
+        default: true
+
+env:
+  BUCKET: geo-opendata
+  DATASET: maff-fude
+  D1_NAME: fude
+  DUCKDB_VERSION: v1.1.3
+  # 1 INSERT あたりの行数。500行で約54KBのSQLになることを実測済み
+  ROWS_PER_INSERT: "500"
+  # 1ファイルあたりの行数。wrangler d1 execute の1回分
+  ROWS_PER_FILE: "50000"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      prefs: ${{ steps.expand.outputs.prefs }}
+    steps:
+      - id: expand
+        run: |
+          if [ "${{ inputs.prefs }}" = "all" ]; then
+            list=$(seq -w 1 47 | paste -sd, -)
+          else
+            list="${{ inputs.prefs }}"
+          fi
+          json=$(echo "$list" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -E '^[0-9]{2}$' \
+                 | jq -R . | jq -sc .)
+          echo "prefs=$json" >> "$GITHUB_OUTPUT"
+          echo "対象: $json"
+
+  load:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      # D1への同時書き込みを避けるため直列実行する
+      max-parallel: 1
+      matrix:
+        pref: ${{ fromJson(needs.prepare.outputs.prefs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: |
+            wrangler.jsonc
+          sparse-checkout-cone-mode: false
+
+      - name: ツール導入 (DuckDB / rclone / wrangler)
+        run: |
+          curl -fsSL -o duckdb.zip \
+            "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
+          unzip -q duckdb.zip && sudo mv duckdb /usr/local/bin/ && sudo chmod +x /usr/local/bin/duckdb
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          npm install -g wrangler@4
+          duckdb --version && wrangler --version
+
+      - name: Parquet を取得 → SQL生成 → D1へ投入
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_REGION: auto
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_S3_NO_CHECK_BUCKET: "true"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          YEAR="${{ inputs.year }}"; PREF="${{ matrix.pref }}"
+          SRC="r2:${BUCKET}/${DATASET}/parquet/${YEAR}/${PREF}/fude_${YEAR}_${PREF}.parquet"
+
+          if ! rclone lsf "$SRC" >/dev/null 2>&1; then
+            echo "::warning::Parquetが存在しないためスキップ: ${YEAR}/${PREF}"
+            exit 0
+          fi
+
+          echo "::group::Parquet ダウンロード"
+          rclone copyto --stats 30s --stats-one-line "$SRC" fude.parquet
+          ls -lh fude.parquet
+          echo "::endgroup::"
+
+          echo "::group::健全性チェック"
+          # SQLへ直に埋め込むため、値に想定外の文字が無いことを確認する
+          bad=$(duckdb -noheader -list -c "
+            SELECT count(*) FROM 'fude.parquet'
+            WHERE polygon_uuid !~ '^[0-9a-fA-F-]+\$'
+               OR local_government_cd !~ '^[0-9]+\$';")
+          if [ "$bad" != "0" ]; then
+            echo "::error::想定外の文字を含む行が ${bad} 件あります"
+            exit 1
+          fi
+          total=$(duckdb -noheader -list -c "SELECT count(*) FROM 'fude.parquet';")
+          echo "投入対象: ${total} 行"
+          echo "::endgroup::"
+
+          echo "::group::VALUES 行を生成"
+          duckdb -c "
+            COPY (
+              SELECT '(''' || polygon_uuid || ''',' || year || ',''' || pref || ''','''
+                  || local_government_cd || ''','
+                  || coalesce(CAST(land_type AS VARCHAR),'NULL') || ','
+                  || min_lng || ',' || min_lat || ',' || max_lng || ',' || max_lat || ')'
+              FROM 'fude.parquet'
+            ) TO 'values.txt' (FORMAT CSV, HEADER false, QUOTE '');"
+          rm -f fude.parquet
+          wc -l values.txt
+          echo "::endgroup::"
+
+          echo "::group::SQLファイルへ分割"
+          mkdir -p sqlchunks
+          python3 - <<'PY'
+          import os
+          rows_per_insert = int(os.environ["ROWS_PER_INSERT"])
+          rows_per_file = int(os.environ["ROWS_PER_FILE"])
+          cols = "polygon_uuid,year,pref,local_government_cd,land_type,min_lng,min_lat,max_lng,max_lat"
+          head = f"INSERT OR REPLACE INTO fude ({cols}) VALUES "
+
+          def flush(buf, fh):
+              if buf:
+                  fh.write(head + ",".join(buf) + ";\n")
+
+          n = fileno = 0
+          fh = None
+          buf = []
+          with open("values.txt") as src:
+              for line in src:
+                  line = line.rstrip("\n")
+                  if not line:
+                      continue
+                  if n % rows_per_file == 0:
+                      flush(buf, fh); buf = []
+                      if fh: fh.close()
+                      fileno += 1
+                      fh = open(f"sqlchunks/{fileno:04d}.sql", "w")
+                  buf.append(line)
+                  n += 1
+                  if len(buf) >= rows_per_insert:
+                      flush(buf, fh); buf = []
+          flush(buf, fh)
+          if fh: fh.close()
+          print(f"{n} 行 → {fileno} ファイル")
+          PY
+          rm -f values.txt
+          ls sqlchunks | wc -l
+          echo "::endgroup::"
+
+          if [ "${{ inputs.replace }}" = "true" ]; then
+            echo "::group::既存行を削除 (${YEAR}/${PREF})"
+            wrangler d1 execute "${D1_NAME}" --remote --yes \
+              --command "DELETE FROM fude WHERE year = ${YEAR} AND pref = '${PREF}';"
+            echo "::endgroup::"
+          fi
+
+          echo "::group::D1へ投入"
+          i=0; last=$(ls sqlchunks | wc -l)
+          for f in sqlchunks/*.sql; do
+            i=$((i+1))
+            echo "[$i/$last] $f"
+            wrangler d1 execute "${D1_NAME}" --remote --yes --file "$f" >/dev/null
+          done
+          echo "::endgroup::"
+
+          echo "::group::件数の突合"
+          got=$(wrangler d1 execute "${D1_NAME}" --remote --yes --json \
+                  --command "SELECT count(*) AS n FROM fude WHERE year = ${YEAR} AND pref = '${PREF}';" \
+                | jq -r '.[0].results[0].n')
+          echo "Parquet: ${total} / D1: ${got}"
+          if [ "$total" != "$got" ]; then
+            echo "::error::件数不一致 parquet=${total} d1=${got}"
+            exit 1
+          fi
+          echo "::endgroup::"
+          echo "✅ ${YEAR}/${PREF} 完了 (${got} 行)"
